@@ -96,7 +96,7 @@ double updateTau(arma::vec &y_hat,
 }
 
 //[[Rcpp::export]]
-Rcpp::List mcmc_sampler(arma::vec x,
+Rcpp::List spline_mcmc_sampler(arma::vec x,
                         arma::vec x_new,
                         arma::vec y,
                         int n_post,
@@ -190,6 +190,135 @@ Rcpp::List mcmc_sampler(arma::vec x,
                                     tau_post);
 
 }
+
+
+//[[Rcpp::export]]
+Rcpp::List sum_spline_mcmc_sampler(arma::vec x,
+                               arma::vec x_new,
+                               arma::vec y,
+                               int n_splines,
+                               int n_post,
+                               int n_burn,
+                               double tau = 1.0){
+
+
+        // Creating a progress bar
+        const int width = 70;
+        double pb = 0;
+
+
+        // Getting the spline matrix
+        arma::mat B = bspline(x, x);
+        arma::mat B_new = bspline(x_new,x);
+
+        // Getting MCMC samples
+        int n_mcmc = n_post + n_burn;
+        arma::mat y_hat_post(n_post,y.size(),arma::fill::zeros);
+        arma::mat y_hat_new_post(n_post,x_new.size(),arma::fill::zeros);
+        arma::mat beta_post(n_post,B.n_cols,arma::fill::zeros);
+        arma::vec tau_post(n_post,arma::fill::zeros);
+        int curr = 0;
+
+        // Initialise the sampled quantities
+        arma::vec beta(B.n_cols);
+        arma::vec y_hat(y.size());
+        arma::vec y_hat_new(x_new.size());
+
+        // Defining other variables
+        arma::vec partial_pred = arma::zeros<arma::vec>(x.size());
+        arma::vec partial_residuals = arma::zeros<arma::vec>(x.size());
+        arma::mat splines_fits_store = arma::zeros<arma::mat>(x.size(),n_splines);
+        arma::mat tree_fits_store_test = arma::zeros<arma::mat>(x_new.n_rows,n_splines);
+
+        // Getting zeros
+        arma::vec prediction_train_sum = arma::zeros<arma::vec>(x.n_rows);
+        arma::vec prediction_test_sum = arma::zeros<arma::vec>(x_new.n_rows);
+        arma::vec prediction_train = arma::zeros<arma::vec>(x.n_rows);
+        arma::vec prediction_test = arma::zeros<arma::vec>(x.n_rows);
+
+        // Initialising the MCMC sampler
+        for(int  i=0; i < n_mcmc; i++) {
+
+                // ===============
+                // Initialising PB
+                std::cout << "[";
+                int k = 0;
+                // Evaluating progress bar
+                for(;k<=pb*width/n_mcmc;k++){
+                        std::cout << "=";
+                }
+
+                for(; k < width;k++){
+                        std:: cout << " ";
+                }
+
+                std::cout << "] " << std::setprecision(5) << (pb/n_mcmc)*100 << "%\r";
+                std::cout.flush();
+
+                /// === End of progress bar code ====
+
+                prediction_train_sum = arma::zeros<arma::vec>(x.n_rows);
+                prediction_test_sum = arma::zeros<arma::vec>(x_new.n_rows);
+
+                // Initialising the loop over the trees
+                for(int t=0;t<n_splines;t++){
+                        partial_residuals = y - partial_pred + splines_fits_store.col(t);
+
+                        beta = beta_sample(B,partial_residuals,tau,n_splines);
+                        // cout << "Error on y_hat" << endl;
+                        prediction_train = B*beta;
+                        prediction_test = B_new*beta;
+
+                        // Updating the partial pred
+                        partial_pred = partial_pred - splines_fits_store.col(t) + prediction_train;
+                        splines_fits_store.col(t) = prediction_train;
+                        prediction_train_sum = prediction_train_sum  + prediction_train;
+                        prediction_test_sum = prediction_test_sum + prediction_test;
+
+                }
+
+                tau = updateTau(y_hat,y,0.00001,0.00001);
+
+                // Storing only the post
+                if(i > n_burn){
+                        y_hat_post.row(curr) = prediction_train_sum.t();
+                        y_hat_new_post.row(curr) = prediction_test_sum.t();
+                        beta_post.row(curr) = beta.t();
+                        tau_post(curr) = tau;
+                        curr ++ ;
+
+                }
+
+                // Adding one MCMC iteration
+                pb++;
+        }
+
+
+        // FINISHING THE PROGRESS BAR
+        std::cout << "[";
+        int k = 0;
+        // Evaluating progress bar
+        for(;k<=pb*width/n_mcmc;k++){
+                std::cout << "=";
+        }
+
+        for(; k < width;k++){
+                std:: cout << " ";
+        }
+
+        std::cout << "] " << std::setprecision(5) << 100 << "%\r";
+        std::cout.flush();
+
+        std::cout << std::endl;
+
+        return Rcpp::List::create(y_hat_post,
+                                  y_hat_new_post,
+                                  beta_post,
+                                  tau_post,
+                                  splines_fits_store);
+
+}
+
 
 
 
