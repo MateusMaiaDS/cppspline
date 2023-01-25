@@ -35,6 +35,7 @@ arma::vec pos_vec(arma::vec x, double x_i){
 }
 
 // Function to generate B
+//[[Rcpp::export]]
 arma::mat bspline(arma::vec x,
                   arma::vec x_obs){
 
@@ -76,7 +77,7 @@ arma::vec beta_sample(arma::mat bspline, arma::vec y,
 
      // Getting the random sample
      arma::mat sample = arma::randn<arma::mat>(bspline.n_cols,1);
-     arma::mat result = arma::chol(inv_b_precision,"lower")*sample + mvn_mean;
+     arma::mat result = arma::chol((1/tau)*inv_b_precision,"lower")*sample + mvn_mean;
 
      return result;
 }
@@ -199,6 +200,7 @@ Rcpp::List sum_spline_mcmc_sampler(arma::vec x,
                                int n_splines,
                                int n_post,
                                int n_burn,
+                               double tau_b,
                                double tau = 1.0){
 
 
@@ -215,6 +217,8 @@ Rcpp::List sum_spline_mcmc_sampler(arma::vec x,
         int n_mcmc = n_post + n_burn;
         arma::mat y_hat_post(n_post,y.size(),arma::fill::zeros);
         arma::mat y_hat_new_post(n_post,x_new.size(),arma::fill::zeros);
+        arma::cube all_trees_post(y.size(),n_splines,n_post,arma::fill::zeros);
+
         arma::mat beta_post(n_post,B.n_cols,arma::fill::zeros);
         arma::vec tau_post(n_post,arma::fill::zeros);
         int curr = 0;
@@ -264,7 +268,7 @@ Rcpp::List sum_spline_mcmc_sampler(arma::vec x,
                 for(int t=0;t<n_splines;t++){
                         partial_residuals = y - partial_pred + splines_fits_store.col(t);
 
-                        beta = beta_sample(B,partial_residuals,tau,n_splines);
+                        beta = beta_sample(B,partial_residuals,tau,tau_b);
                         // cout << "Error on y_hat" << endl;
                         prediction_train = B*beta;
                         prediction_test = B_new*beta;
@@ -277,12 +281,14 @@ Rcpp::List sum_spline_mcmc_sampler(arma::vec x,
 
                 }
 
-                tau = updateTau(y_hat,y,0.00001,0.00001);
+                tau = updateTau(prediction_train_sum,y,0.001,0.001);
+                // tau = 100;
 
                 // Storing only the post
                 if(i > n_burn){
                         y_hat_post.row(curr) = prediction_train_sum.t();
                         y_hat_new_post.row(curr) = prediction_test_sum.t();
+                        all_trees_post.slice(curr) = splines_fits_store;
                         beta_post.row(curr) = beta.t();
                         tau_post(curr) = tau;
                         curr ++ ;
@@ -315,7 +321,8 @@ Rcpp::List sum_spline_mcmc_sampler(arma::vec x,
                                   y_hat_new_post,
                                   beta_post,
                                   tau_post,
-                                  splines_fits_store);
+                                  splines_fits_store,
+                                  all_trees_post);
 
 }
 
